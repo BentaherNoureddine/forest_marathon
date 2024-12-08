@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 # connect to the db
 
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:@localhost/fast_api_school"
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:@localhost/forest_marathon"
 # CREATED THE ENGINE TO ESTABLISH A CONNECTION WITH THE MYSQL DB
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
