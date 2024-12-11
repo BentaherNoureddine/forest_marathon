@@ -42,4 +42,4 @@ def login(request: UserLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error verifying password: {str(e)}")
 
     # Return user data if authentication is successful
-    return GetUser(id=user.id, email=user.email, created_at=user.created_at)
+    return user
