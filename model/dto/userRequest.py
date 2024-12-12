@@ -7,10 +7,12 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
 
+
 # LOGIN REQUEST
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 # GET USER SCHEMA
 

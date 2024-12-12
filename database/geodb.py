@@ -7,12 +7,11 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 class Base(DeclarativeBase):
     pass
 
+
 DATABASE_URL = (
     f"postgresql+asyncpg://"
     f"postgres:noureddine@127.0.0.1:5432/geolocations-postgres"
 )
-
-
 
 engine = create_async_engine(DATABASE_URL)
 async_session_maker = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
