@@ -1,5 +1,7 @@
+from dotenv.parser import Position
 from fastapi import FastAPI, Depends, HTTPException, status
-from geoalchemy2.functions import ST_DWithin, ST_GeogFromWKB
+from geoalchemy2 import WKTElement
+from geoalchemy2.functions import ST_DWithin, ST_GeogFromWKB, ST_SetSRID
 from geoalchemy2.shape import from_shape
 from shapely import Point
 from sqlalchemy import select, and_, func
@@ -12,7 +14,7 @@ from database.geodb import get_async_session
 import copy
 
 from model.User import User
-from model.geomodels import Camp, NearbyCampSchema, CreateCampSchema, CampResponseSchema
+from model.Camp import Camp, NearbyCampSchema, CreateCampSchema, CampResponseSchema
 from service.service import is_camp_table_empty, wkb_to_coordinates
 
 app = FastAPI()
@@ -163,7 +165,7 @@ async def get_all_camps(db_session: AsyncSession = Depends(get_async_session)):
 # get camp by id
 
 @app.get("/get_camp_by_id/{id}")
-async def get_camp_by_id(id: int, db_session: AsyncSession = Depends(get_async_session)):
+async def get_camp_by_id(camp_id: int, db_session: AsyncSession = Depends(get_async_session)):
     try:
         query = await db_session.execute(
             select(
@@ -171,7 +173,7 @@ async def get_camp_by_id(id: int, db_session: AsyncSession = Depends(get_async_s
                 Camp.camp_name,
                 Camp.city,
                 func.ST_AsGeoJSON(Camp.geo_location).label("geojson")
-            ).where(Camp.id == id)
+            ).where(camp_id == Camp.id)
         )
         camp = query.first()
 
@@ -191,7 +193,6 @@ async def get_camp_by_id(id: int, db_session: AsyncSession = Depends(get_async_s
         raise HTTPException(status_code=500, detail="An error occurred while fetching camp details.")
 
 
-
 # check if there is nearby camps
 
 @app.get("/nearby_camps/{user_id}")
@@ -203,7 +204,7 @@ async def get_nearby_camps(user_id: int, radius: float = 10, db: AsyncSession = 
     """
     try:
         # Fetch the user's current position
-        user_query = await db.execute(select(User.current_position).where(User.id == user_id))
+        user_query = await db.execute(select(User.current_position).where(user_id == User.id))
 
         user_position = user_query.scalar_one_or_none()
 
@@ -245,8 +246,52 @@ async def get_nearby_camps(user_id: int, radius: float = 10, db: AsyncSession = 
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
+# Endpoint to add a new balance to the blockchain
+@app.post('/add_balance')
+def add_balance(balance_data: BalanceRequest):
+    data = balance_data.dict()
 
-# GET REWARDED ENDPOINT
+    # check the integrity of the request
+    if 'receiver' not in data or 'amount' not in data:
+        raise HTTPException(status_code=400, detail="Invalid transaction data")
+
+    # the amount should be more than 0
+    if data['amount'] <= 0:
+        raise HTTPException(status_code=400, detail="Balance must be greater than zero")
+
+    # Add the balances to the current list of balances in order to be included in the next mined block
+    index = blockchain.add_balance(data['receiver'], data['amount'])
+    response = {'message': f'Balance added to block {index}'}
+    return response
+
+
+# -----------------------------------------------------------------------------------------------------------------------------
+
+
+blockchain = Blockchain()
+
+
+#  GET INFOS ABOUT A BLOCKCHAIN ENDPOINT
+
+@app.get("/get_chain")
+def get_chain():
+    return dict(chain=blockchain.chain, length=len(blockchain.chain))
+
+
+# CHECK THE VALIDITY OF A BLOCKCHAIN ENDPOINT
+@app.get('/valid')
+def valid():
+    if blockchain.is_chain_valid():
+        return {'message': 'The Blockchain is valid.'}
+    else:
+        return {'message': 'The Blockchain is not valid.'}
+
+
+# GET THE PENDING TRANSACTIONS
+
+@app.get('/pending_transactions')
+def pending_transactions():
+    return {'pending_transactions': blockchain.transactions}
 
 
 # ADD TRANSACTION ENDPOINT
@@ -274,48 +319,116 @@ def add_transaction(transaction_data: TransactionRequest):
     return response
 
 
-# Endpoint to add a new balance to the blockchain
-@app.post('/add_balance')
-def add_balance(balance_data: BalanceRequest):
-    data = balance_data.dict()
+# GET USER BY ID
+@app.get("/get_user/{user_id}")
+async def get_user(user_id: int, db: AsyncSession = Depends(get_async_session)):
+    async with db.begin():  # Begin transaction for async DB operations
+        # Query user by email asynchronously
+        result = await db.execute(select(User).filter(user_id == User.id))
+        user = result.scalars().first()
 
-    # check the integrity of the request
-    if 'receiver' not in data or 'amount' not in data:
-        raise HTTPException(status_code=400, detail="Invalid transaction data")
+        # Check if user exists
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
 
-    # the amount should be more than 0
-    if data['amount'] <= 0:
-        raise HTTPException(status_code=400, detail="Balance must be greater than zero")
+    return [user.email, user.password]
 
-    # Add the balances to the current list of balances in order to be included in the next mined block
-    index = blockchain.add_balance(data['receiver'], data['amount'])
-    response = {'message': f'Balance added to block {index}'}
+
+# SET A POSITION TO A USER
+@app.put("/add_position/{id}")
+async def add_position(
+        id: int,
+        latitude: float,
+        longitude: float,
+        session: AsyncSession = Depends(get_async_session)
+):
+    # Query the user
+    query = await session.execute(select(User).where(id == User.id))
+    user = query.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Create a Point object and convert it to WKTElement
+    position = WKTElement(f"POINT({longitude} {latitude})", srid=4326)
+
+    # Update user's position
+    user.current_position = position
+    session.add(user)
+    await session.commit()
+
+    return {"message": "User position updated successfully", "id": user.id}
+
+
+
+
+# GET REWARDED ENDPOINT
+
+# CHECK IF A USER IS NEAR TO ANY CAMP
+# IF THE USER IS NEAR A CAMP THEY WILL GET REWARDED (MAKE A TRANSACTION FROM THE CAMP'S BALANCE TO THE USER'S BALANCE
+@app.get('/reward_me')
+async def reward_me(email: str, session: AsyncSession = Depends(get_async_session)):
+    try:
+        async with session.begin():  # Begin transaction for async DB operations
+            # Query user by email asynchronously
+            result = await session.execute(select(User).filter(User.email == email))
+            user = result.scalars().first()
+
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+
+            # Ensure user's current position is set
+            if not user.current_position:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="User's current position is not set"
+                )
+
+            # Check if there is a camp within a 10-meter radius
+            near_camp_query = await session.execute(
+                select(Camp)
+                .filter(
+                    ST_DWithin(
+                        Camp.geo_location,
+                        ST_SetSRID(user.current_position, 4326),
+                        10
+                    )
+                )
+            )
+            camp = near_camp_query.scalar_one_or_none()
+            print(camp)
+
+            # If no camp is found, return an error
+            if not camp:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="There is no camp near this user"
+                )
+
+            # Perform the transaction: transfer 10 points from camp to user
+            index = blockchain.add_transaction(
+                sender=camp.camp_name,
+                receiver=user.email,
+                amount=10
+            )
+
+            response = {'message': f'Transaction added to block {index}'}
+
+    except HTTPException as http_exc:
+        # Rethrow HTTPExceptions to keep their status code and details
+        raise http_exc
+    except Exception as e:
+        # Log unexpected exceptions for debugging
+        print(f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong"
+        )
+
     return response
-
-
-#-----------------------------------------------------------------------------------------------------------------------------
-
-
-blockchain = Blockchain()
-
-
-#  GET INFOS ABOUT A BLOCKCHAIN ENDPOINT
-
-@app.get("/get_chain")
-def get_chain():
-    return dict(chain=blockchain.chain, length=len(blockchain.chain))
-
-
-# CHECK THE VALIDITY OF A BLOCKCHAIN ENDPOINT
-@app.get('/valid')
-def valid():
-    if blockchain.is_chain_valid():
-        return {'message': 'The Blockchain is valid.'}
-    else:
-        return {'message': 'The Blockchain is not valid.'}
-
-
-
 
 # MINE A BLOCK
 
@@ -385,8 +498,3 @@ def mine_block():
                 'transactions': block['transactions']}
 
     return response
-
-
-@app.get('/pending_transactions')
-def pending_transactions():
-    return {'pending_transactions': blockchain.transactions}

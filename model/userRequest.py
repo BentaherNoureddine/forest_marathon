@@ -23,3 +23,8 @@ class GetUser(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AddPosition(BaseModel):
+    id: int
+    position: dict

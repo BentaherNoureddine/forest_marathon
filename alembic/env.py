@@ -1,7 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 from database.geodb import Base
-from model.geomodels import Camp
+from model.Camp import Camp
 from model.User import User
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection

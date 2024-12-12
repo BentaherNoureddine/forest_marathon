@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from geoalchemy2.shape import from_shape
-from geoalchemy2 import functions as geo_func
-from shapely.geometry import Point, point
+from shapely.geometry import Point
 from model.User import User
-from model.dto.userRequest import UserCreate, GetUser, UserLogin
+from model.userRequest import UserCreate, GetUser, UserLogin
 from sqlalchemy.ext.asyncio import AsyncSession
 from passlib.context import CryptContext
 from sqlalchemy.future import select
@@ -46,7 +45,7 @@ async def create_user(user: UserCreate, db: AsyncSession = Depends(get_async_ses
 async def login(request: UserLogin, db: AsyncSession = Depends(get_async_session)):
     async with db.begin():  # Begin transaction for async DB operations
         # Query user by email asynchronously
-        result = await db.execute(select(User).filter(User.email == request.email))
+        result = await db.execute(select(User).filter(request.email == User.email))
         user = result.scalars().first()
 
         # Check if user exists
